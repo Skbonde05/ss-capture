@@ -44,7 +44,11 @@ async function buildForBrowser(browser) {
       { src: 'src/js/content.js', dest: 'content.js' },
       { src: 'src/js/background.js', dest: 'background.js' },
       { src: 'src/css/style.css', dest: 'style.css' },
-      { src: 'icons', dest: 'icons' }
+      { src: 'icons', dest: 'icons' },
+      // Privacy Editor files
+      { src: 'src/editor/editor.html', dest: 'editor/editor.html' },
+      { src: 'src/editor/editor.js', dest: 'editor/editor.js' },
+      { src: 'src/editor/editor.css', dest: 'editor/editor.css' }
     ];
 
     for (const file of filesToCopy) {
@@ -94,7 +98,8 @@ async function generateManifest(browser, env) {
       "scripting",
       "downloads",
       "storage",
-      "unlimitedStorage"
+      "unlimitedStorage",
+      "contextMenus"
     ],
     host_permissions: [
       "<all_urls>"

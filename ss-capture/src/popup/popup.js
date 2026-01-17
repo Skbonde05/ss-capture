@@ -2,6 +2,52 @@
 let captureInProgress = false;
 let captureData = null;
 
+// Function to inject script with permission request if needed
+async function injectScriptWithPermission(tabId) {
+  return new Promise((resolve) => {
+    chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      files: ['content.js']
+    }, () => {
+      if (chrome.runtime.lastError) {
+        const errorMessage = chrome.runtime.lastError.message;
+        console.error('Injection failed:', errorMessage);
+
+        // Check if it's a permission error
+        if (errorMessage.includes('permission') || errorMessage.includes('access') || errorMessage.includes('Cannot access')) {
+          console.log('Permission error detected, requesting host permissions...');
+
+          // Request permission
+          chrome.permissions.request({
+            origins: ['<all_urls>']
+          }, (granted) => {
+            if (granted) {
+              console.log('Permission granted, retrying injection...');
+              // Retry injection
+              chrome.scripting.executeScript({
+                target: { tabId: tabId },
+                files: ['content.js']
+              }, () => {
+                if (chrome.runtime.lastError) {
+                  resolve({ success: false, error: chrome.runtime.lastError.message });
+                } else {
+                  resolve({ success: true });
+                }
+              });
+            } else {
+              resolve({ success: false, error: 'User denied permission request' });
+            }
+          });
+        } else {
+          resolve({ success: false, error: errorMessage });
+        }
+      } else {
+        resolve({ success: true });
+      }
+    });
+  });
+}
+
 // Show error alert function
 function showErrorAlert(message) {
   const errorAlert = document.getElementById('errorAlert');
@@ -43,12 +89,12 @@ async function startCapture(mode = 'FULL_PAGE') {
     captureBtn.disabled = true;
     visibleAreaBtn.disabled = true;
     selectElementBtn.disabled = true;
-    
+
     cancelBtn.style.display = 'flex';
     saveBtn.style.display = 'none';
     copyBtn.style.display = 'none';
     spinner.style.display = 'block';
-    
+
     if (mode === 'FULL_PAGE') {
       progressContainer.style.display = 'block';
       progressBar.style.width = '0%';
@@ -72,10 +118,10 @@ async function startCapture(mode = 'FULL_PAGE') {
     }
 
     // Execute the content script
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ['content.js']
-    });
+    const injectResult = await injectScriptWithPermission(tab.id);
+    if (!injectResult.success) {
+      throw new Error(injectResult.error);
+    }
 
     // Trigger capture explicitly with mode
     chrome.tabs.sendMessage(tab.id, { type: 'START_CAPTURE', mode, isPopup: true });
@@ -189,10 +235,14 @@ function displayCapture(dataUrl) {
   const previewContainer = document.getElementById('previewContainer');
   const previewDimensions = document.getElementById('previewDimensions');
   const saveBtn = document.getElementById('saveBtn');
+  const copyBtn = document.getElementById('copyBtn');
+  const editBtn = document.getElementById('editBtn');
 
   captureData = dataUrl;
   saveBtn.style.display = 'flex';
-  statusText.textContent = 'Screenshot ready! Click Save to download.';
+  copyBtn.style.display = 'flex';
+  editBtn.style.display = 'flex';
+  statusText.textContent = 'Screenshot ready! Click Save to download or Edit to hide sensitive info.';
 
   try {
     const img = new Image();
@@ -208,6 +258,26 @@ function displayCapture(dataUrl) {
     console.warn('Could not display preview:', error);
   }
 }
+
+// Edit button handler - opens privacy editor
+document.getElementById('editBtn').addEventListener('click', () => {
+  if (captureData) {
+    // Store screenshot data for editor
+    localStorage.setItem('screenshotForEdit', captureData);
+
+    // Open editor in new window
+    chrome.windows.create({
+      url: chrome.runtime.getURL('/editor/editor.html'),
+      type: 'popup',
+      width: 1200,
+      height: 800
+    });
+
+    document.getElementById('statusText').textContent = 'Editor opened - Apply blur/pixelate effects to hide sensitive info';
+  } else {
+    showErrorAlert('No screenshot data available to edit');
+  }
+});
 
 initPopup();
 
@@ -247,6 +317,13 @@ chrome.runtime.onMessage.addListener((message) => {
     }, 2000);
   }
 
+  // Handle edited screenshot from editor
+  if (message.type === 'EDITOR_COMPLETE') {
+    captureData = message.dataUrl;
+    const previewImage = document.getElementById('previewImage');
+    previewImage.src = message.dataUrl;
+    statusText.textContent = 'Screenshot edited! Privacy effects applied. Click Save to download.';
+  }
 
   if (message.type === 'CAPTURE_ERROR') {
     resetUI();
